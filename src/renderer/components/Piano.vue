@@ -7,7 +7,7 @@
       <div v-for="frequency in halfNotes"
            :style="`left: ${getLeft(frequency[1]) / 10}%;`"
            :class="{active: pressedKey === frequency[1]}"
-           @click="() => startSound(frequency[0])"
+           @click="() => startSound(frequency[1])"
            class="not-active halfTone"
       >
       {{frequency[0]}}
@@ -20,7 +20,7 @@
       <div v-for="frequency in fullNotes"
            :style="` left: ${getLeft(frequency[1]) / 10}%; `"
            :class="{active: pressedKey === frequency[1]}"
-           @click="() => startSound(frequency[0])"
+           @click="() => startSound(frequency[1])"
            class="fullTone"
       >
       {{frequency[0]}}
@@ -63,9 +63,8 @@
     },
     mounted () {
       this.getAudio()
+      this.getMidiAccess()
       this.$nextTick(() => {
-        // this.getAnalyser()
-        // this.draw()
       })
     },
     beforeDestroy () {
@@ -114,9 +113,8 @@
       // }
     },
     methods: {
-      startSound (note) {
-        let freq = freqMap[note]
-        this.pressedKey = freq
+      startSound (freq) {
+        this.pressedKey = this.round(freq, 2)
         this.gainNode = {}
         this.oscillator = {}
         this.freq = {}
@@ -126,8 +124,8 @@
 
         this.oscillator = this.context.createOscillator()
         this.oscillator.type = this.oscillatorType
-        this.freq[note] = freq
-        this.oscillator.frequency.value = this.freq[note]
+        this.freq[this.round(freq, 2)] = this.round(freq, 2)
+        this.oscillator.frequency.value = this.freq[this.round(freq, 2)]
         this.gainNode = this.context.createGain()
         this.oscillator.connect(this.gainNode)
         this.gainNode.connect(this.context.destination)
@@ -137,7 +135,7 @@
         this.gainNode.gain.linearRampToValueAtTime(0.0001, this.context.currentTime + duration)
         this.oscillator.start()
         this.gainNode.connect(this.context.destination)
-        this.stopSound(note)
+        this.stopSound(this.round(freq, 2))
       },
       stopSound (index) {
         const duration = 2
@@ -152,11 +150,63 @@
         this.oscillator = {}
         this.freq = {}
         addEventListener('keypress', (key) => {
-          this.startSound(keyMap[key.key])
+          this.startSound(freqMap[keyMap[key.key]])
         })
+      },
+      getMidiAccess () {
+        if (navigator.requestMIDIAccess()) {
+          console.log('This browser supports WebMIDI!')
+
+          let onMIDISuccess = function (midiAccess, context) {
+            console.log(midiAccess)
+
+            let inputs = midiAccess.inputs
+            let outputs = midiAccess.outputs
+            console.log(inputs, outputs)
+            for (let input of inputs.values()) {
+              input.onmidimessage = function (message) {
+                var command = message.data[0]
+                var note = message.data[1]
+                var velocity = (message.data.length > 2) ? message.data[2] : 0 // a velocity value might not be included with a noteOff command
+
+                switch (command) {
+                  case 144: // noteOn
+                    if (velocity > 0) {
+                      context.startSound(context.noteOn(note, velocity))
+                    } else {
+                      context.noteOff(note)
+                    }
+                    break
+                  case 128: // noteOff
+                    context.noteOff(note)
+                    break
+                }
+              }
+            }
+          }
+
+          let onMIDIFailure = function () {
+            console.log('Could not access your MIDI devices.')
+          }
+
+          navigator.requestMIDIAccess()
+            .then((message) => onMIDISuccess(message, this), onMIDIFailure)
+        } else {
+          console.log('WebMIDI is not supported in this browser.')
+        }
       },
       getLeft (freq) {
         return ((69 + (12 * Math.log2(freq / 440))) * 25) - 1500
+      },
+      noteOn (midiKey) {
+        return 440 / Math.pow(2, (69 - midiKey) / 12)
+      },
+      noteOff (midiKey) {
+        this.stopSound(midiKey)
+      },
+      round (n, k) {
+        let factor = Math.pow(10, k)
+        return Math.round(n * factor) / factor
       }
     }
   }
