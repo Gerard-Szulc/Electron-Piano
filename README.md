@@ -1,6 +1,13 @@
-# custom-launcher
+# Electron Piano
 
-> An electron-vue project
+Just an electron-vue piano project with keyboard support.
+
+todo: 
+1) midi support
+2) some sound effects
+3) dunno maybe c++ modules for electron ?? ( far future )
+
+> An electron-vue piano project
 
 #### Build Setup
 
