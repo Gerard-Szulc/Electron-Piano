@@ -1,5 +1,6 @@
 <template>
   <div id="wrapper">
+    <canvas ref="canvas" id="oscilloscope"></canvas>
     <div :style="`
     display: flex;
      flex-direction: row;
@@ -31,8 +32,27 @@
       <option value="square">square</option>
       <option value="triangle">triangle</option>
       <option value="sawtooth">sawtooth</option>
+      <option value="custom">custom</option>
     </select>
+    <div v-if="oscillatorType === 'custom'">
+      <label for="attack">Attack</label>
+      <input name="attack" id="attack" type="range" min="0" max="1" step="0.1" v-model="attackValue"/>
+
+      <label for="release">Release</label>
+      <input name="release" id="release" type="range" min="0" max="1" step="0.1" v-model="releaseValue"/>
+      <label for="release">SweepLength</label>
+      <input name="release" id="sweep" type="range" min="0" max="10" step="0.1" v-model="sweepLength"/>
+
+      <input id="freq0" type="range" min="-1" max="1" v-model="rangeChanges['0']" step="0.05">
+      <input id="freq1" type="range" min="-1" max="1" v-model="rangeChanges['1']" step="0.05">
+      <input id="freq2" type="range" min="-1" max="1" v-model="rangeChanges['2']" step="0.05">
+      <input id="freq3" type="range" min="-1" max="1" v-model="rangeChanges['3']" step="0.05">
+      <input id="freq4" type="range" min="-1" max="1" v-model="rangeChanges['4']" step="0.05">
+      <input id="freq5" type="range" min="-1" max="1" v-model="rangeChanges['5']" step="0.05">
+      <input id="freq6" type="range" min="-1" max="1" v-model="rangeChanges['6']" step="0.05">
+    </div>
   </div>
+
 </template>
 
 <script>
@@ -46,6 +66,18 @@
     components: { SystemInformation },
     data () {
       return {
+        attackValue: 0.2,
+        releaseValue: 0.5,
+        sweepLength: 2,
+        rangeChanges: {
+          0: 0,
+          1: 0.5,
+          2: 0.5,
+          3: 0.5,
+          4: 0.5,
+          5: 0.5,
+          6: 0.5
+        },
         freqMap: freqMap,
         keys: {},
         pressedKey: 0,
@@ -123,16 +155,27 @@
         }
 
         this.oscillator = this.context.createOscillator()
-        this.oscillator.type = this.oscillatorType
+        if (this.oscillatorType === 'custom') {
+          this.setCustomWaveForm(this.context, this.oscillator)
+        } else {
+          this.oscillator.type = this.oscillatorType
+        }
+        this.gainNode = this.context.createGain()
+        this.gainNode.connect(this.analyser)
+        this.analyser.connect(this.context.destination)
+
         this.freq[this.round(freq, 2)] = this.round(freq, 2)
         this.oscillator.frequency.value = this.freq[this.round(freq, 2)]
-        this.gainNode = this.context.createGain()
         this.oscillator.connect(this.gainNode)
         this.gainNode.connect(this.context.destination)
 
         const duration = 2
 
-        this.gainNode.gain.linearRampToValueAtTime(0.0001, this.context.currentTime + duration)
+        if (this.oscillatorType === 'custom') {
+          this.setSweepAndRelease()
+        } else {
+          this.gainNode.gain.linearRampToValueAtTime(0.0002, this.context.currentTime + duration)
+        }
         this.oscillator.start()
         this.gainNode.connect(this.context.destination)
         this.stopSound(this.round(freq, 2))
@@ -149,9 +192,31 @@
         this.gainNode = {}
         this.oscillator = {}
         this.freq = {}
+        this.analyser = this.context.createAnalyser()
+        this.analyser.fftSize = 2048
+        this.bufferLength = this.analyser.frequencyBinCount
+        this.dataArray = new Uint8Array(this.bufferLength)
+        this.analyser.getByteTimeDomainData(this.dataArray)
+
+        this.canvas = document.getElementById('oscilloscope')
+        this.canvasContext = this.canvas.getContext('2d')
+        this.draw()
+
         addEventListener('keypress', (key) => {
           this.startSound(freqMap[keyMap[key.key]])
         })
+      },
+      setCustomWaveForm (context, oscillator) {
+        let imag = new Float32Array([this.rangeChanges[0], this.rangeChanges[1], this.rangeChanges[2], this.rangeChanges[3], this.rangeChanges[4], this.rangeChanges[5], this.rangeChanges[6]])
+        let real = new Float32Array(imag.length)
+        // let imag = new Float32Array([this.rangeChanges[0], this.rangeChanges[1], this.rangeChanges[2], this.rangeChanges[3], this.rangeChanges[4], this.rangeChanges[5], this.rangeChanges[6]])
+        let customWave = context.createPeriodicWave(real, imag)
+        oscillator.setPeriodicWave(customWave)
+      },
+      setSweepAndRelease () {
+        this.gainNode.gain.linearRampToValueAtTime(1, this.context.currentTime + this.round(this.attackValue, 2))
+        // set our release
+        this.gainNode.gain.linearRampToValueAtTime(0, this.context.currentTime + this.round(this.sweepLength - this.releaseValue, 2))
       },
       getMidiAccess () {
         if (navigator.requestMIDIAccess()) {
@@ -207,6 +272,38 @@
       round (n, k) {
         let factor = Math.pow(10, k)
         return Math.round(n * factor) / factor
+      },
+      draw () {
+        requestAnimationFrame(this.draw)
+
+        this.analyser.getByteTimeDomainData(this.dataArray)
+
+        this.canvasContext.fillStyle = 'rgb(200, 200, 200)'
+        this.canvasContext.fillRect(0, 0, this.canvas.width, this.canvas.height)
+
+        this.canvasContext.lineWidth = 2
+        this.canvasContext.strokeStyle = 'rgb(0, 0, 0)'
+
+        this.canvasContext.beginPath()
+
+        var sliceWidth = this.canvas.width * 1.0 / this.bufferLength
+        var x = 0
+
+        for (var i = 0; i < this.bufferLength; i++) {
+          var v = this.dataArray[i] / 128.0
+          var y = v * this.canvas.height / 2
+
+          if (i === 0) {
+            this.canvasContext.moveTo(x, y)
+          } else {
+            this.canvasContext.lineTo(x, y)
+          }
+
+          x += sliceWidth
+        }
+
+        this.canvasContext.lineTo(this.canvas.width, this.canvas.height / 2)
+        this.canvasContext.stroke()
       }
     }
   }
@@ -222,14 +319,14 @@
   }
   .halfTone {
     position: absolute;
-    top: 50px;
+    top: 450px;
     width:25px; height: 50px;
     border: 1px solid black;
     color: white;
   }
   .fullTone {
     position: absolute;
-    top: 100px;
+    top: 500px;
     width: 25px;
     height: 50px;
     border: 1px solid black;
